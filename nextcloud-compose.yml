@@ -1,0 +1,30 @@
+version: '3.7'
+services:
+  nextcloud:
+    image: nextcloud/all-in-one:latest
+    container_name: nextcloud-aio-mastercontainer
+    restart: always
+    volumes:
+      - nextcloud_aio_mastercontainer:/mnt/docker-aio-config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - APACHE_PORT=11000
+      - APACHE_IP_BINDING=127.0.0.1
+      - NEXTCLOUD_TRUSTED_DOMAINS=nextcloud.korczewski.de pk-dyn.spdns.eu
+      - OVERWRITEPROTOCOL=https
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nextcloud.rule=Host(`pk-dyn.spdns.eu`) && PathPrefix(`/nextcloud`)"
+      - "traefik.http.routers.nextcloud.entrypoints=websecure"
+      - "traefik.http.routers.nextcloud.tls.certresolver=myresolver"
+      - "traefik.http.services.nextcloud.loadbalancer.server.port=11000"
+      - "traefik.http.middlewares.nextcloud-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.nextcloud-https-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.nextcloud.middlewares=nextcloud-https-redirect"
+    networks:
+      - nc-network
+volumes:
+  nextcloud_aio_mastercontainer:
+networks:
+  nc-network:
+    external: true
