@@ -1,0 +1,106 @@
+version: '3.7'
+
+services:
+  traefik:
+    image: traefik:v3.1
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80/tcp,:80/udp
+      - --entrypoints.websecure.address=:443/tcp,:443/udp
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.myresolver.acme.tlschallenge=true
+      - --certificatesresolvers.myresolver.acme.email=${EMAIL}
+      - --certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json
+      - --log.level=DEBUG  # Detailed logs for debugging
+      - --accesslog=true
+    ports:
+      - "8080:8080/tcp"
+      - "8080:8080/udp"
+      - "80:80/tcp"
+      - "80:80/udp"
+      - "443:443/tcp"
+      - "443:443/udp"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./letsencrypt:/letsencrypt
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+    networks:
+      - default
+      - internal
+    restart: always
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik-dyn.rule=Host(`${DOMAIN_DYN}`)"
+      - "traefik.http.routers.traefik-dyn.entrypoints=websecure"
+      - "traefik.http.routers.traefik-dyn.tls.certresolver=myresolver"
+      - "traefik.http.routers.traefik-nextcloud.rule=Host(`${DOMAIN_NEXTCLOUD}`)"
+      - "traefik.http.routers.traefik-nextcloud.entrypoints=websecure"
+      - "traefik.http.routers.traefik-nextcloud.tls.certresolver=myresolver"
+      - "traefik.http.routers.traefik.service=api@internal"
+
+  nextcloud-db:
+    image: mariadb:10.11
+    container_name: nextcloud-db
+    command: --transaction-isolation=READ-COMMITTED --innodb_read_only_compressed=OFF
+    restart: unless-stopped
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./nextcloud/db:/var/lib/mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=test
+      - MYSQL_PASSWORD=test
+      - MYSQL_DATABASE=nextcloud
+      - MYSQL_USER=nextcloud
+      - MYSQL_INITDB_SKIP_TZINFO=1
+      - MARIADB_AUTO_UPGRADE=1
+    networks:
+      - internal
+
+  nextcloud-redis:
+    image: redis:alpine
+    container_name: nextcloud-redis
+    hostname: nextcloud-redis
+    networks:
+      - internal
+    restart: unless-stopped
+    command: redis-server --requirepass test
+
+  nextcloud-app:
+    build: ./nextcloud
+    container_name: nextcloud-app
+    restart: unless-stopped
+    depends_on:
+      - nextcloud-db
+      - nextcloud-redis
+    environment:
+      TRUSTED_PROXIES: 172.17.0.0/16, 172.18.0.0/16, 172.19.0.0/16,10.0.0.0/8
+      OVERWRITEPROTOCOL: https
+      OVERWRITECLIURL: https://nextcloud.korczewski.de
+      OVERWRITEHOST: nextcloud.korczewski.de
+      REDIS_HOST: nextcloud-redis
+      REDIS_HOST_PASSWORD: test
+    volumes:
+      - ./nextcloud/app:/var/www/html
+      - ./nextcloud/data:/var/www/html/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nextcloud.entrypoints=websecure"
+      - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.korczewski.de`)"
+      - "traefik.http.routers.nextcloud.tls=true"
+      - "traefik.http.routers.nextcloud.tls.certresolver=myresolver"
+      - "traefik.http.routers.nextcloud.service=nextcloud"
+      - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
+      - "traefik.docker.network=default"
+    networks:
+      - default
+      - internal
+
+networks:
+  default:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true
